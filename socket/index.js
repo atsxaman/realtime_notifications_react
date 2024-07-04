@@ -1,56 +1,56 @@
 import { Server } from "socket.io";
+import mongoose from 'mongoose';
+
+// Connect to MongoDB
+mongoose.connect('mongodb+srv://urbanmizaz:gUHxuwnDxCI9ABgj@cluster0.v3ny1cx.mongodb.net/realtime-notification?retryWrites=true&w=majority&appName=Cluster0')
+    .then(() => {
+        console.log('Connected to database successfully');
+    })
+    .catch((error) => {
+        console.error('Error connecting to database:', error);
+    });
+
+// Define a schema and model for notifications
+const notificationSchema = new mongoose.Schema({
+    username: String,
+    count: { type: Number, default: 0 }
+});
+const Notification = mongoose.model('Notification', notificationSchema);
 
 const io = new Server({
     cors: {
-      origin: "http://localhost:5173",
+        origin: "http://localhost:5173",
     },
-  });
+});
 
-  let onlineUsers = [];
-
-  const addNewUser = (username, socketId) => {
-    !onlineUsers.some((user) => user.username === username) &&
-      onlineUsers.push({ username, socketId });
-  };
-
-  const removeUser = (socketId) => {
-    onlineUsers = onlineUsers.filter((user) => user.socketId !== socketId);
-  };
-
-  const getUser = (username) => {
-    return onlineUsers.find((user) => user.username === username);
-  };
-
-  io.on("connection", (socket) => {
-    
-    socket.on("newUser", (username) => {
-        addNewUser(username, socket.id);
-      });
-
-
-      socket.on("sendNotification", ({ senderName, receiverName, type }) => {
-        const receiver = getUser(receiverName);
-        io.to(receiver.socketId).emit("getNotification", {
-          senderName,
-          type,
-        });
-      });
-
-
-      socket.on("sendText", ({ senderName, receiverName, text }) => {
-        const receiver = getUser(receiverName);
-        io.to(receiver.socketId).emit("getText", {
-          senderName,
-          text,
-        });
-      });
-    
- 
-    socket.on('disconnect', () => {
-        removeUser(socket.id);
+io.on("connection", (socket) => {
+    socket.on('send_notification', async (username) => {
+        let notification = await Notification.findOne({ username });
+        if (notification) {
+            notification.count++;
+        } else {
+            notification = new Notification({ username, count: 1 });
+        }
+        await notification.save();
+        io.emit('receive_notification', { username, count: notification.count });
     });
 
-  });
+    // Handle clearing notifications
+    socket.on('clear_notifications', async (username) => {
+        await Notification.deleteMany({ username });
+        io.emit('clear_notifications', username);
+    });
 
+    // Handle user reconnecting and sending current notification count
+    socket.on('reconnect_user', async (username) => {
+        const notification = await Notification.findOne({ username });
+        if (notification) {
+            socket.emit('receive_notification', { username, count: notification.count });
+        }
+    });
 
-  io.listen(3000);
+    socket.on('disconnect', () => {
+    });
+});
+
+io.listen(3000);
